@@ -240,6 +240,12 @@
                 font-weight: 600;
             }
             /* 导出/导入浮动面板 */
+            #cm-btn-wrapper {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: nowrap;
+            }
             #cm-tracker-panel {
                 position: fixed;
                 bottom: 16px;
@@ -478,9 +484,8 @@
         });
 
         // 将下载按钮和自定义按钮包裹在同一个 flex 容器中，确保它们在同一行
-        const btnWrapper = document.createElement('span');
+        const btnWrapper = document.createElement('div');
         btnWrapper.id = 'cm-btn-wrapper';
-        btnWrapper.style.cssText = 'display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap;';
         dlBtn.parentNode.insertBefore(btnWrapper, dlBtn);
         btnWrapper.appendChild(dlBtn);
         btnWrapper.appendChild(btnToggle);
