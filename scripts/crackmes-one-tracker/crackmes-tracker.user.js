@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         crackmes.one 完成进度追踪
 // @namespace    https://github.com/BetaCat76/monkeytools
-// @version      1.1.0
-// @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态
+// @version      2.0.0
+// @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态，支持收藏功能和用户页展示收藏列表
 // @author       BetaCat76
 // @match        https://crackmes.one/search*
 // @match        https://crackmes.one/crackme/*
+// @match        https://crackmes.one/user/*
+// @updateURL    https://raw.githubusercontent.com/BetaCat76/monkeytools/main/scripts/crackmes-one-tracker/crackmes-tracker.user.js
+// @downloadURL  https://raw.githubusercontent.com/BetaCat76/monkeytools/main/scripts/crackmes-one-tracker/crackmes-tracker.user.js
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_setClipboard
@@ -25,6 +28,7 @@
 
     // ─── 存储键名 ──────────────────────────────────────────────────────────────
     const STORAGE_KEY = 'crackmes_completed';
+    const FAVORITES_KEY = 'crackmes_favorites';
 
     // ─── 读取 / 写入已完成列表 ─────────────────────────────────────────────────
 
@@ -62,6 +66,57 @@
     /** @param {string} id @returns {boolean} */
     function isCompleted(id) {
         return loadCompleted().includes(id);
+    }
+
+    // ─── 读取 / 写入收藏列表 ───────────────────────────────────────────────────
+
+    /**
+     * @typedef {{ id: string, name: string, difficulty: string, platform: string, language: string }} CrackmeInfo
+     * @returns {{ [id: string]: CrackmeInfo }}
+     */
+    function loadFavorites() {
+        try {
+            const raw = GM_getValue(FAVORITES_KEY, '{}');
+            const parsed = JSON.parse(raw);
+            return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+
+    /** @param {{ [id: string]: CrackmeInfo }} favs */
+    function saveFavorites(favs) {
+        GM_setValue(FAVORITES_KEY, JSON.stringify(favs));
+    }
+
+    /** @param {CrackmeInfo} info */
+    function addFavorite(info) {
+        const favs = loadFavorites();
+        favs[info.id] = info;
+        saveFavorites(favs);
+    }
+
+    /** @param {string} id */
+    function removeFavorite(id) {
+        const favs = loadFavorites();
+        delete favs[id];
+        saveFavorites(favs);
+    }
+
+    /** @param {string} id @returns {boolean} */
+    function isFavorited(id) {
+        return id in loadFavorites();
+    }
+
+    // ─── HTML 转义 ─────────────────────────────────────────────────────────────
+
+    /** @param {string} str @returns {string} */
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
     }
 
     // ─── 从 URL 路径中提取 crackme ID ──────────────────────────────────────────
@@ -118,6 +173,66 @@
             }
             #cm-btn-toggle-done.is-done {
                 background-color: #6c757d;
+            }
+            /* 详情页收藏按钮 */
+            #cm-btn-toggle-fav {
+                margin-left: 8px;
+                padding: 6px 14px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                background-color: #ffc107;
+                color: #212529;
+                vertical-align: middle;
+            }
+            #cm-btn-toggle-fav.is-fav {
+                background-color: #fd7e14;
+                color: #fff;
+            }
+            /* 用户页收藏列表 */
+            #cm-favorites-section {
+                margin-top: 30px;
+                padding: 16px;
+                background: #fff;
+                border: 1px solid #dee2e6;
+                border-radius: 8px;
+            }
+            #cm-favorites-section h4 {
+                margin-bottom: 12px;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            .cm-fav-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 14px;
+            }
+            .cm-fav-table th,
+            .cm-fav-table td {
+                padding: 8px 10px;
+                border: 1px solid #dee2e6;
+                text-align: left;
+                vertical-align: middle;
+            }
+            .cm-fav-table thead th {
+                background-color: #f8f9fa;
+                font-weight: 600;
+            }
+            .cm-fav-table tbody tr:nth-child(even) {
+                background-color: #f8f9fa;
+            }
+            .cm-fav-table tbody tr.cm-done-row {
+                background-color: rgba(40, 167, 69, 0.08) !important;
+            }
+            .cm-fav-status-done {
+                color: #28a745;
+                font-weight: 600;
+            }
+            .cm-fav-status-pending {
+                color: #dc3545;
+                font-weight: 600;
             }
             /* 导出/导入浮动面板 */
             #cm-tracker-panel {
@@ -178,7 +293,78 @@
         }
     }
 
+    /**
+     * 如果收藏按钮已存在，刷新其文字和样式以反映最新收藏状态。
+     * @param {string} id
+     */
+    function refreshExistingFavToggle(id) {
+        const btn = document.getElementById('cm-btn-toggle-fav');
+        if (!btn) return;
+        if (isFavorited(id)) {
+            btn.textContent = '★ 已收藏';
+            btn.classList.add('is-fav');
+        } else {
+            btn.textContent = '☆ 收藏';
+            btn.classList.remove('is-fav');
+        }
+    }
+
     // ─── 详情页逻辑 ────────────────────────────────────────────────────────────
+
+    /**
+     * 从详情页提取 crackme 的名称、难度、平台、语言等元数据。
+     * 依次尝试 table tr、dl/dt/dd、strong/b 标签等多种策略。
+     * @returns {{ name: string, difficulty: string, platform: string, language: string }}
+     */
+    function extractCrackmeMetadata() {
+        // ── 提取名称 ──
+        let name = '';
+        const h1 = document.querySelector('h1');
+        if (h1) name = h1.textContent.trim();
+        if (!name) name = document.title.split(/[-|]/)[0].trim();
+
+        let difficulty = '', platform = '', language = '';
+
+        // 策略 1：表格行（<tr> 中前后两个 <td>）
+        document.querySelectorAll('tr').forEach(row => {
+            const tds = row.querySelectorAll('td');
+            if (tds.length < 2) return;
+            const label = tds[0].textContent.trim().replace(/:$/, '').toLowerCase();
+            const value = tds[1].textContent.trim();
+            if (/difficulty/i.test(label)) difficulty = difficulty || value;
+            else if (/platform/i.test(label)) platform = platform || value;
+            else if (/language/i.test(label)) language = language || value;
+        });
+
+        // 策略 2：定义列表（<dt> / <dd>）
+        if (!difficulty || !platform || !language) {
+            document.querySelectorAll('dt').forEach(dt => {
+                const label = dt.textContent.trim().replace(/:$/, '').toLowerCase();
+                const dd = dt.nextElementSibling;
+                if (!dd || dd.tagName !== 'DD') return;
+                const value = dd.textContent.trim();
+                if (/difficulty/i.test(label)) difficulty = difficulty || value;
+                else if (/platform/i.test(label)) platform = platform || value;
+                else if (/language/i.test(label)) language = language || value;
+            });
+        }
+
+        // 策略 3：加粗文本标签（<strong>/<b>）后紧跟文本节点
+        if (!difficulty || !platform || !language) {
+            document.querySelectorAll('strong, b').forEach(el => {
+                const label = el.textContent.trim().replace(/:$/, '').toLowerCase();
+                const next = el.nextSibling;
+                const value = next ? (next.textContent || next.nodeValue || '').trim() : '';
+                if (!value) return;
+                if (/difficulty/i.test(label)) difficulty = difficulty || value;
+                else if (/platform/i.test(label)) platform = platform || value;
+                else if (/language/i.test(label)) language = language || value;
+            });
+        }
+
+        dbg('extractCrackmeMetadata:', { name, difficulty, platform, language });
+        return { name, difficulty, platform, language };
+    }
 
     /**
      * 尝试找到下载按钮。crackmes.one 的下载按钮通常是
@@ -207,7 +393,7 @@
     }
 
     /**
-     * 在下载按钮旁插入完成/已完成切换按钮。
+     * 在下载按钮旁插入完成/已完成切换按钮和收藏/已收藏切换按钮。
      * 若下载按钮尚未出现，则延迟重试（最多 10 次，间隔 500ms）。
      */
     function insertToggleButton(id, retries) {
@@ -230,6 +416,7 @@
             return;
         }
 
+        // ── 完成按钮 ──
         const btnToggle = document.createElement('button');
         btnToggle.id = 'cm-btn-toggle-done';
 
@@ -260,6 +447,38 @@
         dlBtn.insertAdjacentElement('afterend', btnToggle);
         refreshToggle();
         dbg('insertToggleButton: 完成按钮已插入到下载按钮后面');
+
+        // ── 收藏按钮 ──
+        const btnFav = document.createElement('button');
+        btnFav.id = 'cm-btn-toggle-fav';
+
+        function refreshFavToggle() {
+            if (isFavorited(id)) {
+                btnFav.textContent = '★ 已收藏';
+                btnFav.classList.add('is-fav');
+            } else {
+                btnFav.textContent = '☆ 收藏';
+                btnFav.classList.remove('is-fav');
+            }
+        }
+
+        btnFav.addEventListener('click', () => {
+            if (isFavorited(id)) {
+                removeFavorite(id);
+                dbg('已取消收藏, id=', id);
+            } else {
+                const meta = extractCrackmeMetadata();
+                addFavorite({ id, ...meta });
+                dbg('已添加收藏, id=', id, meta);
+            }
+            refreshFavToggle();
+            const statusEl = document.getElementById('cm-tracker-status');
+            if (statusEl) statusEl.textContent = isFavorited(id) ? '已添加收藏' : '已取消收藏';
+        });
+
+        btnToggle.insertAdjacentElement('afterend', btnFav);
+        refreshFavToggle();
+        dbg('insertToggleButton: 收藏按钮已插入到完成按钮后面');
     }
 
     function runDetailPage() {
@@ -309,6 +528,7 @@
                 statusEl.textContent = `导入成功，共 ${merged.length} 条（新增 ${merged.length - oldCount} 条）`;
                 dbg('导入完成', merged);
                 refreshExistingToggle(id);
+                refreshExistingFavToggle(id);
             } catch (e) {
                 statusEl.textContent = '导入失败：' + e.message;
                 dbg('导入失败', e);
@@ -381,6 +601,107 @@
         dbg('runSearchPage: MutationObserver 已启动');
     }
 
+    // ─── 用户页逻辑 ────────────────────────────────────────────────────────────
+
+    /**
+     * 在用户主页（/user/:username）底部注入收藏列表。
+     * 未完成的条目排在前面，点击名称可跳转到详情页。
+     */
+    function runUserPage() {
+        dbg('runUserPage 开始, URL=', window.location.href);
+
+        const favs = loadFavorites();
+        const favList = Object.values(favs);
+        dbg('收藏列表:', favList);
+
+        if (favList.length === 0) {
+            dbg('runUserPage: 收藏列表为空，不插入面板');
+            return;
+        }
+
+        injectStyles();
+
+        // 未完成排前面，已完成排后面；同状态内保持原顺序
+        favList.sort((a, b) => {
+            const aDone = isCompleted(a.id);
+            const bDone = isCompleted(b.id);
+            if (aDone === bDone) return 0;
+            return aDone ? 1 : -1;
+        });
+
+        const section = document.createElement('div');
+        section.id = 'cm-favorites-section';
+
+        const heading = document.createElement('h4');
+        heading.textContent = '⭐ 我的收藏';
+        section.appendChild(heading);
+
+        const table = document.createElement('table');
+        table.className = 'cm-fav-table';
+
+        const thead = document.createElement('thead');
+        thead.innerHTML = `<tr>
+            <th>名称</th>
+            <th>难度</th>
+            <th>平台</th>
+            <th>语言</th>
+            <th>状态</th>
+        </tr>`;
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        favList.forEach(fav => {
+            const done = isCompleted(fav.id);
+            const tr = document.createElement('tr');
+            if (done) tr.classList.add('cm-done-row');
+
+            const nameTd = document.createElement('td');
+            const nameLink = document.createElement('a');
+            nameLink.href = `/crackme/${fav.id}`;
+            nameLink.textContent = fav.name || fav.id;
+            nameTd.appendChild(nameLink);
+
+            const diffTd = document.createElement('td');
+            diffTd.textContent = fav.difficulty || '-';
+
+            const platTd = document.createElement('td');
+            platTd.textContent = fav.platform || '-';
+
+            const langTd = document.createElement('td');
+            langTd.textContent = fav.language || '-';
+
+            const statusTd = document.createElement('td');
+            const statusSpan = document.createElement('span');
+            if (done) {
+                statusSpan.className = 'cm-fav-status-done';
+                statusSpan.textContent = '✔ 已完成';
+            } else {
+                statusSpan.className = 'cm-fav-status-pending';
+                statusSpan.textContent = '未完成';
+            }
+            statusTd.appendChild(statusSpan);
+
+            tr.appendChild(nameTd);
+            tr.appendChild(diffTd);
+            tr.appendChild(platTd);
+            tr.appendChild(langTd);
+            tr.appendChild(statusTd);
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        section.appendChild(table);
+
+        // 尝试插入到主内容区域末尾
+        const mainContent = document.querySelector('main, .container, #content, .content, [role="main"]');
+        if (mainContent) {
+            mainContent.appendChild(section);
+        } else {
+            document.body.appendChild(section);
+        }
+
+        dbg('runUserPage: 收藏列表面板已注入，共', favList.length, '条');
+    }
+
     // ─── 入口 ──────────────────────────────────────────────────────────────────
 
     const pathname = window.location.pathname;
@@ -403,6 +724,15 @@
             document.addEventListener('DOMContentLoaded', runSearchPage);
         } else {
             runSearchPage();
+        }
+    } else if (pathname.startsWith('/user/')) {
+        dbg('匹配到用户页');
+        // 用户页
+        if (document.readyState === 'loading') {
+            dbg('DOM 尚未加载完，等待 DOMContentLoaded');
+            document.addEventListener('DOMContentLoaded', runUserPage);
+        } else {
+            runUserPage();
         }
     } else {
         dbg('当前页面不匹配任何规则，pathname=', pathname);
