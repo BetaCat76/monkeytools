@@ -160,7 +160,6 @@
             }
             /* 详情页完成按钮 */
             #cm-btn-toggle-done {
-                margin-left: 8px;
                 padding: 6px 14px;
                 border: none;
                 border-radius: 4px;
@@ -176,7 +175,6 @@
             }
             /* 详情页收藏按钮 */
             #cm-btn-toggle-fav {
-                margin-left: 8px;
                 padding: 6px 14px;
                 border: none;
                 border-radius: 4px;
@@ -195,46 +193,59 @@
             #cm-favorites-section {
                 margin-top: 30px;
                 padding: 16px;
-                background: #fff;
-                border: 1px solid #dee2e6;
+                background: #2b2f36;
+                border: 1px solid #495057;
                 border-radius: 8px;
+                color: #e9ecef;
             }
             #cm-favorites-section h4 {
                 margin-bottom: 12px;
                 font-size: 18px;
                 font-weight: 700;
+                color: #e9ecef;
             }
             .cm-fav-table {
                 width: 100%;
                 border-collapse: collapse;
                 font-size: 14px;
+                color: #e9ecef;
             }
             .cm-fav-table th,
             .cm-fav-table td {
                 padding: 8px 10px;
-                border: 1px solid #dee2e6;
+                border: 1px solid #495057;
                 text-align: left;
                 vertical-align: middle;
             }
             .cm-fav-table thead th {
-                background-color: #f8f9fa;
+                background-color: #343a40;
                 font-weight: 600;
+                color: #e9ecef;
             }
             .cm-fav-table tbody tr:nth-child(even) {
-                background-color: #f8f9fa;
+                background-color: #343a40;
             }
             .cm-fav-table tbody tr.cm-done-row {
-                background-color: rgba(40, 167, 69, 0.08) !important;
+                background-color: rgba(40, 167, 69, 0.18) !important;
+            }
+            .cm-fav-table a {
+                color: #6ea8fe;
             }
             .cm-fav-status-done {
-                color: #28a745;
+                color: #5cb85c;
                 font-weight: 600;
             }
             .cm-fav-status-pending {
-                color: #dc3545;
+                color: #e06c75;
                 font-weight: 600;
             }
             /* 导出/导入浮动面板 */
+            #cm-btn-wrapper {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: nowrap;
+            }
             #cm-tracker-panel {
                 position: fixed;
                 bottom: 16px;
@@ -444,10 +455,6 @@
             if (statusEl) statusEl.textContent = isCompleted(id) ? '已标记为完成' : '已取消完成';
         });
 
-        dlBtn.insertAdjacentElement('afterend', btnToggle);
-        refreshToggle();
-        dbg('insertToggleButton: 完成按钮已插入到下载按钮后面');
-
         // ── 收藏按钮 ──
         const btnFav = document.createElement('button');
         btnFav.id = 'cm-btn-toggle-fav';
@@ -476,9 +483,17 @@
             if (statusEl) statusEl.textContent = isFavorited(id) ? '已添加收藏' : '已取消收藏';
         });
 
-        btnToggle.insertAdjacentElement('afterend', btnFav);
+        // 将下载按钮和自定义按钮包裹在同一个 flex 容器中，确保它们在同一行
+        const btnWrapper = document.createElement('div');
+        btnWrapper.id = 'cm-btn-wrapper';
+        dlBtn.parentNode.insertBefore(btnWrapper, dlBtn);
+        btnWrapper.appendChild(dlBtn);
+        btnWrapper.appendChild(btnToggle);
+        btnWrapper.appendChild(btnFav);
+
+        refreshToggle();
         refreshFavToggle();
-        dbg('insertToggleButton: 收藏按钮已插入到完成按钮后面');
+        dbg('insertToggleButton: 完成/收藏按钮已与下载按钮一同放入 flex 容器');
     }
 
     function runDetailPage() {
