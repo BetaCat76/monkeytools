@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         crackmes.one 完成进度追踪
 // @namespace    https://github.com/BetaCat76/monkeytools
-// @version      1.0.0
+// @version      1.1.0
 // @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态
 // @author       BetaCat76
 // @match        https://crackmes.one/search*
@@ -14,6 +14,14 @@
 
 (function () {
     'use strict';
+
+    const LOG_PREFIX = '[crackmes-tracker]';
+
+    function dbg(...args) {
+        console.log(LOG_PREFIX, ...args);
+    }
+
+    dbg('脚本已加载', 'URL:', window.location.href, 'readyState:', document.readyState);
 
     // ─── 存储键名 ──────────────────────────────────────────────────────────────
     const STORAGE_KEY = 'crackmes_completed';
@@ -73,7 +81,9 @@
     // ─── 通用样式 ──────────────────────────────────────────────────────────────
 
     function injectStyles() {
+        if (document.getElementById('cm-tracker-styles')) return;
         const style = document.createElement('style');
+        style.id = 'cm-tracker-styles';
         style.textContent = `
             .cm-done-badge {
                 display: inline-flex;
@@ -93,95 +103,142 @@
             .cm-done-row {
                 background-color: rgba(40, 167, 69, 0.08) !important;
             }
-            /* 详情页操作面板 */
+            /* 详情页完成按钮 */
+            #cm-btn-toggle-done {
+                margin-left: 8px;
+                padding: 6px 14px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                background-color: #28a745;
+                color: #fff;
+                vertical-align: middle;
+            }
+            #cm-btn-toggle-done.is-done {
+                background-color: #6c757d;
+            }
+            /* 导出/导入浮动面板 */
             #cm-tracker-panel {
                 position: fixed;
-                top: 70px;
+                bottom: 16px;
                 right: 16px;
                 z-index: 9999;
                 background: #fff;
                 border: 1px solid #ccc;
                 border-radius: 8px;
-                padding: 12px 16px;
+                padding: 10px 14px;
                 box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                min-width: 200px;
                 font-family: sans-serif;
-                font-size: 14px;
+                font-size: 13px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
             }
-            #cm-tracker-panel h4 {
-                margin: 0 0 10px;
-                font-size: 14px;
-                color: #333;
-            }
-            #cm-tracker-panel button {
-                display: block;
-                width: 100%;
-                margin-bottom: 6px;
-                padding: 6px 10px;
+            #cm-btn-export {
+                padding: 5px 10px;
                 border: none;
                 border-radius: 4px;
                 cursor: pointer;
-                font-size: 13px;
-            }
-            #cm-btn-toggle-done {
-                background-color: #28a745;
-                color: #fff;
-            }
-            #cm-btn-toggle-done.is-done {
-                background-color: #dc3545;
-            }
-            #cm-btn-export {
+                font-size: 12px;
                 background-color: #6c757d;
                 color: #fff;
             }
             #cm-btn-import {
+                padding: 5px 10px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
                 background-color: #17a2b8;
                 color: #fff;
             }
             #cm-tracker-status {
                 font-size: 12px;
                 color: #555;
-                margin-top: 4px;
             }
         `;
         document.head.appendChild(style);
     }
 
+    /**
+     * 如果切换按钮已存在，刷新其文字和样式以反映最新完成状态。
+     * @param {string} id
+     */
+    function refreshExistingToggle(id) {
+        const btn = document.getElementById('cm-btn-toggle-done');
+        if (!btn) return;
+        if (isCompleted(id)) {
+            btn.textContent = '✔ 已完成';
+            btn.classList.add('is-done');
+        } else {
+            btn.textContent = '完成';
+            btn.classList.remove('is-done');
+        }
+    }
+
     // ─── 详情页逻辑 ────────────────────────────────────────────────────────────
 
-    function runDetailPage() {
-        const id = extractIdFromPath();
-        if (!id) return;
+    /**
+     * 尝试找到下载按钮。crackmes.one 的下载按钮通常是
+     * 含有 "download" 文字或 href 含 /download 的链接/按钮。
+     * @returns {Element|null}
+     */
+    function findDownloadButton() {
+        // 优先匹配 href 含 /download 的 <a>
+        const byHref = document.querySelector('a[href*="/download"]');
+        if (byHref) {
+            dbg('findDownloadButton: 通过 href=/download 找到', byHref);
+            return byHref;
+        }
 
-        injectStyles();
+        // 其次匹配文本含 Download 的按钮或链接
+        const candidates = [...document.querySelectorAll('a, button')];
+        const byText = candidates.find(el => /download/i.test(el.textContent.trim()));
+        if (byText) {
+            dbg('findDownloadButton: 通过文本 "Download" 找到', byText);
+            return byText;
+        }
 
-        const panel = document.createElement('div');
-        panel.id = 'cm-tracker-panel';
+        dbg('findDownloadButton: 未找到下载按钮，所有 <a> 和 <button>:',
+            candidates.map(el => `${el.tagName} href=${el.getAttribute('href')} text="${el.textContent.trim().slice(0, 40)}"`));
+        return null;
+    }
 
-        const title = document.createElement('h4');
-        title.textContent = '📋 完成进度追踪';
+    /**
+     * 在下载按钮旁插入完成/已完成切换按钮。
+     * 若下载按钮尚未出现，则延迟重试（最多 10 次，间隔 500ms）。
+     */
+    function insertToggleButton(id, retries) {
+        retries = retries === undefined ? 0 : retries;
+        dbg(`insertToggleButton: 第 ${retries + 1} 次尝试，id=${id}`);
+
+        if (document.getElementById('cm-btn-toggle-done')) {
+            dbg('insertToggleButton: 按钮已存在，跳过');
+            return;
+        }
+
+        const dlBtn = findDownloadButton();
+        if (!dlBtn) {
+            if (retries < 10) {
+                dbg(`insertToggleButton: 未找到下载按钮，${500}ms 后重试`);
+                setTimeout(() => insertToggleButton(id, retries + 1), 500);
+            } else {
+                dbg('insertToggleButton: 已达最大重试次数，放弃');
+            }
+            return;
+        }
 
         const btnToggle = document.createElement('button');
         btnToggle.id = 'cm-btn-toggle-done';
 
-        const btnExport = document.createElement('button');
-        btnExport.id = 'cm-btn-export';
-        btnExport.textContent = '📤 导出已完成列表';
-
-        const btnImport = document.createElement('button');
-        btnImport.id = 'cm-btn-import';
-        btnImport.textContent = '📥 导入已完成列表';
-
-        const statusEl = document.createElement('div');
-        statusEl.id = 'cm-tracker-status';
-
-        /** 根据当前状态刷新按钮文字和样式 */
-        function refresh() {
+        function refreshToggle() {
             if (isCompleted(id)) {
-                btnToggle.textContent = '✘ 取消完成';
+                btnToggle.textContent = '✔ 已完成';
                 btnToggle.classList.add('is-done');
             } else {
-                btnToggle.textContent = '✔ 标记为已完成';
+                btnToggle.textContent = '完成';
                 btnToggle.classList.remove('is-done');
             }
         }
@@ -189,18 +246,54 @@
         btnToggle.addEventListener('click', () => {
             if (isCompleted(id)) {
                 unmarkCompleted(id);
-                statusEl.textContent = '已从完成列表中移除';
+                dbg('已取消完成标记, id=', id);
             } else {
                 markCompleted(id);
-                statusEl.textContent = '已标记为完成！';
+                dbg('已标记为完成, id=', id);
             }
-            refresh();
+            refreshToggle();
+            // 同步更新浮动面板状态文字
+            const statusEl = document.getElementById('cm-tracker-status');
+            if (statusEl) statusEl.textContent = isCompleted(id) ? '已标记为完成' : '已取消完成';
         });
+
+        dlBtn.insertAdjacentElement('afterend', btnToggle);
+        refreshToggle();
+        dbg('insertToggleButton: 完成按钮已插入到下载按钮后面');
+    }
+
+    function runDetailPage() {
+        const id = extractIdFromPath();
+        dbg('runDetailPage 开始, pathname=', window.location.pathname, 'id=', id);
+
+        if (!id) {
+            dbg('runDetailPage: 无法提取 id，退出');
+            return;
+        }
+
+        injectStyles();
+        insertToggleButton(id);
+
+        // ── 底部浮动面板（导出 / 导入） ──
+        const panel = document.createElement('div');
+        panel.id = 'cm-tracker-panel';
+
+        const btnExport = document.createElement('button');
+        btnExport.id = 'cm-btn-export';
+        btnExport.textContent = '📤 导出';
+
+        const btnImport = document.createElement('button');
+        btnImport.id = 'cm-btn-import';
+        btnImport.textContent = '📥 导入';
+
+        const statusEl = document.createElement('span');
+        statusEl.id = 'cm-tracker-status';
 
         btnExport.addEventListener('click', () => {
             const json = JSON.stringify(loadCompleted(), null, 2);
             GM_setClipboard(json, 'text');
-            statusEl.textContent = `已复制 ${loadCompleted().length} 条记录到剪贴板`;
+            statusEl.textContent = `已复制 ${loadCompleted().length} 条到剪贴板`;
+            dbg('导出已完成列表', loadCompleted());
         });
 
         btnImport.addEventListener('click', () => {
@@ -208,26 +301,26 @@
             if (!input) return;
             try {
                 const imported = JSON.parse(input);
-                if (!Array.isArray(imported)) throw new Error('导入数据必须是 JSON 数组格式，例如 ["id1","id2"]');
+                if (!Array.isArray(imported)) throw new Error('必须是 JSON 数组');
                 const valid = imported.filter(x => typeof x === 'string' && /^[0-9a-f]{24}$/i.test(x));
                 const oldCount = loadCompleted().length;
                 const merged = Array.from(new Set([...loadCompleted(), ...valid]));
                 saveCompleted(merged);
                 statusEl.textContent = `导入成功，共 ${merged.length} 条（新增 ${merged.length - oldCount} 条）`;
-                refresh();
+                dbg('导入完成', merged);
+                refreshExistingToggle(id);
             } catch (e) {
                 statusEl.textContent = '导入失败：' + e.message;
+                dbg('导入失败', e);
             }
         });
 
-        panel.appendChild(title);
-        panel.appendChild(btnToggle);
         panel.appendChild(btnExport);
         panel.appendChild(btnImport);
         panel.appendChild(statusEl);
         document.body.appendChild(panel);
 
-        refresh();
+        dbg('runDetailPage 完成，已完成列表:', loadCompleted());
     }
 
     // ─── 搜索页逻辑 ────────────────────────────────────────────────────────────
@@ -239,10 +332,13 @@
      */
     function annotateSearchResults() {
         const links = document.querySelectorAll('a[href*="/crackme/"]');
+        dbg(`annotateSearchResults: 找到 ${links.length} 个 crackme 链接`);
 
+        let annotated = 0;
         links.forEach(link => {
             const id = extractIdFromPath(link.getAttribute('href') || '');
-            if (!id || !isCompleted(id)) return;
+            if (!id) return;
+            if (!isCompleted(id)) return;
 
             // 避免重复插入徽章
             if (link.nextElementSibling && link.nextElementSibling.classList.contains('cm-done-badge')) return;
@@ -257,10 +353,17 @@
             // 高亮所在行（<tr> 祖先）
             const row = link.closest('tr');
             if (row) row.classList.add('cm-done-row');
+
+            annotated++;
         });
+
+        dbg(`annotateSearchResults: 标注了 ${annotated} 个已完成条目`);
     }
 
     function runSearchPage() {
+        dbg('runSearchPage 开始, URL=', window.location.href);
+        dbg('已完成列表:', loadCompleted());
+
         injectStyles();
 
         // 立即处理当前内容
@@ -269,30 +372,39 @@
         // 搜索页面可能通过 AJAX / 分页动态加载内容，使用 MutationObserver 监听变化。
         // 防抖处理，避免短时间内大量 DOM 变更触发过多调用。
         let debounceTimer = null;
-        const observer = new MutationObserver(() => {
+        const observer = new MutationObserver((mutations) => {
+            dbg(`MutationObserver 触发，变更数: ${mutations.length}`);
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(annotateSearchResults, 200);
         });
         observer.observe(document.body, { childList: true, subtree: true });
+        dbg('runSearchPage: MutationObserver 已启动');
     }
 
     // ─── 入口 ──────────────────────────────────────────────────────────────────
 
     const pathname = window.location.pathname;
+    dbg('入口, pathname=', pathname);
 
     if (/^\/crackme\/[0-9a-f]{24}/i.test(pathname)) {
+        dbg('匹配到详情页');
         // 详情页
         if (document.readyState === 'loading') {
+            dbg('DOM 尚未加载完，等待 DOMContentLoaded');
             document.addEventListener('DOMContentLoaded', runDetailPage);
         } else {
             runDetailPage();
         }
     } else if (pathname.startsWith('/search')) {
+        dbg('匹配到搜索页');
         // 搜索页
         if (document.readyState === 'loading') {
+            dbg('DOM 尚未加载完，等待 DOMContentLoaded');
             document.addEventListener('DOMContentLoaded', runSearchPage);
         } else {
             runSearchPage();
         }
+    } else {
+        dbg('当前页面不匹配任何规则，pathname=', pathname);
     }
 })();
