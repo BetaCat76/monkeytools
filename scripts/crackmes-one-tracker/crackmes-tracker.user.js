@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         crackmes.one 完成进度追踪
 // @namespace    https://github.com/BetaCat76/monkeytools
-// @version      2.0.0
+// @version      2.1.0
 // @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态，支持收藏功能和用户页展示收藏列表
 // @author       BetaCat76
 // @match        https://crackmes.one/search*
@@ -29,6 +29,7 @@
     // ─── 存储键名 ──────────────────────────────────────────────────────────────
     const STORAGE_KEY = 'crackmes_completed';
     const FAVORITES_KEY = 'crackmes_favorites';
+    const SEARCH_FILTERS_KEY = 'crackmes_search_filters';
 
     // ─── 读取 / 写入已完成列表 ─────────────────────────────────────────────────
 
@@ -106,6 +107,27 @@
     /** @param {string} id @returns {boolean} */
     function isFavorited(id) {
         return id in loadFavorites();
+    }
+
+    // ─── 读取 / 写入搜索筛选条件 ───────────────────────────────────────────────
+
+    /**
+     * @typedef {{ [key: string]: string | boolean }} SearchFilters
+     * @returns {SearchFilters}
+     */
+    function loadSearchFilters() {
+        try {
+            const raw = GM_getValue(SEARCH_FILTERS_KEY, '{}');
+            const parsed = JSON.parse(raw);
+            return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+
+    /** @param {SearchFilters} filters */
+    function saveSearchFilters(filters) {
+        GM_setValue(SEARCH_FILTERS_KEY, JSON.stringify(filters));
     }
 
     // ─── HTML 转义 ─────────────────────────────────────────────────────────────
@@ -600,6 +622,90 @@
         dbg('已完成列表:', loadCompleted());
 
         injectStyles();
+
+        // ── 搜索筛选条件持久化 ──────────────────────────────────────────────────
+
+        /**
+         * 收集表单中所有命名字段的当前值。
+         * @param {HTMLFormElement} form
+         * @returns {SearchFilters}
+         */
+        function collectFormFilters(form) {
+            const filters = {};
+            form.querySelectorAll('input, select, textarea').forEach(el => {
+                const key = el.name || el.id;
+                if (!key) return;
+                if (el.type === 'checkbox' || el.type === 'radio') {
+                    filters[key] = el.checked;
+                } else {
+                    filters[key] = el.value;
+                }
+            });
+            return filters;
+        }
+
+        /**
+         * 将保存的筛选条件回填到表单字段中。
+         * @param {HTMLFormElement} form
+         * @param {SearchFilters} filters
+         */
+        function restoreFormFilters(form, filters) {
+            if (!filters || Object.keys(filters).length === 0) return;
+            form.querySelectorAll('input, select, textarea').forEach(el => {
+                const key = el.name || el.id;
+                if (!key || !(key in filters)) return;
+                if (el.type === 'checkbox' || el.type === 'radio') {
+                    el.checked = !!filters[key];
+                } else {
+                    el.value = String(filters[key]);
+                }
+            });
+            dbg('搜索筛选条件已恢复:', filters);
+        }
+
+        /**
+         * 尝试找到搜索表单，最多重试 retries 次（每次间隔 300ms）。
+         * 找到后绑定保存和恢复逻辑。
+         * @param {number} [retries]
+         */
+        function setupFilterPersistence(retries) {
+            retries = retries === undefined ? 0 : retries;
+            const form = document.querySelector('form');
+            if (!form) {
+                if (retries < 10) {
+                    setTimeout(() => setupFilterPersistence(retries + 1), 300);
+                } else {
+                    dbg('setupFilterPersistence: 未找到表单，放弃');
+                }
+                return;
+            }
+
+            // 仅在无查询参数的新搜索页（用户直接导航到 /search）时恢复上次条件
+            if (!window.location.search) {
+                restoreFormFilters(form, loadSearchFilters());
+            }
+
+            // 表单提交时保存筛选条件
+            form.addEventListener('submit', () => {
+                const filters = collectFormFilters(form);
+                saveSearchFilters(filters);
+                dbg('搜索筛选条件已保存 (表单提交):', filters);
+            });
+
+            // 同时监听搜索按钮点击（覆盖通过 JS 触发提交的情况）
+            const submitBtn = form.querySelector('[type="submit"], button:not([type="button"])');
+            if (submitBtn) {
+                submitBtn.addEventListener('click', () => {
+                    const filters = collectFormFilters(form);
+                    saveSearchFilters(filters);
+                    dbg('搜索筛选条件已保存 (按钮点击):', filters);
+                });
+            }
+
+            dbg('setupFilterPersistence: 筛选条件持久化已设置');
+        }
+
+        setupFilterPersistence();
 
         // 立即处理当前内容
         annotateSearchResults();
