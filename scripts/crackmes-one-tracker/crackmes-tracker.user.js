@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         crackmes.one 完成进度追踪
 // @namespace    https://github.com/BetaCat76/monkeytools
-// @version      2.1.0
+// @version      2.1.1
 // @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态，支持收藏功能和用户页展示收藏列表
 // @author       BetaCat76
 // @match        https://crackmes.one/search*
@@ -633,6 +633,7 @@
         function collectFormFilters(form) {
             const filters = {};
             form.querySelectorAll('input, select, textarea').forEach(el => {
+                if (el.type === 'hidden') return;
                 const key = el.name || el.id;
                 if (!key) return;
                 if (el.type === 'checkbox' || el.type === 'radio') {
@@ -652,6 +653,7 @@
         function restoreFormFilters(form, filters) {
             if (!filters || Object.keys(filters).length === 0) return;
             form.querySelectorAll('input, select, textarea').forEach(el => {
+                if (el.type === 'hidden') return;
                 const key = el.name || el.id;
                 if (!key || !(key in filters)) return;
                 if (el.type === 'checkbox' || el.type === 'radio') {
