@@ -716,8 +716,15 @@
             const id = extractIdFromPath(link.getAttribute('href') || '');
             if (!id) return;
 
-            const alreadyDone = link.nextElementSibling && link.nextElementSibling.classList.contains('cm-done-badge');
-            const alreadyShelved = link.nextElementSibling && link.nextElementSibling.classList.contains('cm-shelved-badge');
+            // Check all following siblings for existing badges to avoid duplicates
+            let sibling = link.nextElementSibling;
+            let alreadyDone = false;
+            let alreadyShelved = false;
+            while (sibling) {
+                if (sibling.classList.contains('cm-done-badge')) alreadyDone = true;
+                if (sibling.classList.contains('cm-shelved-badge')) alreadyShelved = true;
+                sibling = sibling.nextElementSibling;
+            }
 
             if (isCompleted(id) && !alreadyDone) {
                 // 避免重复插入已完成徽章
@@ -731,7 +738,7 @@
                 if (row) row.classList.add('cm-done-row');
 
                 annotated++;
-            } else if (isShelved(id) && !alreadyShelved && !alreadyDone) {
+            } else if (isShelved(id) && !alreadyShelved) {
                 // 仅在未显示已完成徽章时显示搁置徽章，避免重复插入
                 const badge = document.createElement('span');
                 badge.className = 'cm-shelved-badge';
