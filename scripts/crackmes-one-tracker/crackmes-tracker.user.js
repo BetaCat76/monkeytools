@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         crackmes.one 完成进度追踪
 // @namespace    https://github.com/BetaCat76/monkeytools
-// @version      2.1.1
-// @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态，支持收藏功能和用户页展示收藏列表
+// @version      2.2.0
+// @description  追踪哪些 crackme 已经完成，在搜索列表和详情页高亮显示完成状态，支持收藏功能、搁置功能和用户页展示收藏列表
 // @author       BetaCat76
 // @match        https://crackmes.one/search*
 // @match        https://crackmes.one/crackme/*
@@ -30,6 +30,7 @@
     const STORAGE_KEY = 'crackmes_completed';
     const FAVORITES_KEY = 'crackmes_favorites';
     const SEARCH_FILTERS_KEY = 'crackmes_search_filters';
+    const SHELVED_KEY = 'crackmes_shelved';
 
     // ─── 读取 / 写入已完成列表 ─────────────────────────────────────────────────
 
@@ -107,6 +108,44 @@
     /** @param {string} id @returns {boolean} */
     function isFavorited(id) {
         return id in loadFavorites();
+    }
+
+    // ─── 读取 / 写入搁置列表 ───────────────────────────────────────────────────
+
+    /** @returns {string[]} 已搁置的 crackme ID 数组 */
+    function loadShelved() {
+        try {
+            const raw = GM_getValue(SHELVED_KEY, '[]');
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    /** @param {string[]} list */
+    function saveShelved(list) {
+        GM_setValue(SHELVED_KEY, JSON.stringify(list));
+    }
+
+    /** @param {string} id */
+    function markShelved(id) {
+        const list = loadShelved();
+        if (!list.includes(id)) {
+            list.push(id);
+            saveShelved(list);
+        }
+    }
+
+    /** @param {string} id */
+    function unmarkShelved(id) {
+        const list = loadShelved().filter(x => x !== id);
+        saveShelved(list);
+    }
+
+    /** @param {string} id @returns {boolean} */
+    function isShelved(id) {
+        return loadShelved().includes(id);
     }
 
     // ─── 读取 / 写入搜索筛选条件 ───────────────────────────────────────────────
@@ -210,6 +249,41 @@
             #cm-btn-toggle-fav.is-fav {
                 background-color: #fd7e14;
                 color: #fff;
+            }
+            /* 详情页搁置按钮 */
+            #cm-btn-toggle-shelve {
+                padding: 6px 14px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                background-color: #adb5bd;
+                color: #212529;
+                vertical-align: middle;
+            }
+            #cm-btn-toggle-shelve.is-shelved {
+                background-color: #6c757d;
+                color: #fff;
+            }
+            /* 搁置徽章（搜索列表） */
+            .cm-shelved-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                background-color: #6c757d;
+                color: #fff;
+                font-size: 13px;
+                font-weight: bold;
+                margin-left: 6px;
+                vertical-align: middle;
+                flex-shrink: 0;
+            }
+            .cm-shelved-row {
+                background-color: rgba(108, 117, 125, 0.10) !important;
             }
             /* 用户页收藏列表 */
             #cm-favorites-section {
@@ -339,6 +413,22 @@
         } else {
             btn.textContent = '☆ 收藏';
             btn.classList.remove('is-fav');
+        }
+    }
+
+    /**
+     * 如果搁置按钮已存在，刷新其文字和样式以反映最新搁置状态。
+     * @param {string} id
+     */
+    function refreshExistingShelveToggle(id) {
+        const btn = document.getElementById('cm-btn-toggle-shelve');
+        if (!btn) return;
+        if (isShelved(id)) {
+            btn.textContent = '⏸ 已搁置';
+            btn.classList.add('is-shelved');
+        } else {
+            btn.textContent = '⏸ 搁置';
+            btn.classList.remove('is-shelved');
         }
     }
 
@@ -505,6 +595,33 @@
             if (statusEl) statusEl.textContent = isFavorited(id) ? '已添加收藏' : '已取消收藏';
         });
 
+        // ── 搁置按钮 ──
+        const btnShelve = document.createElement('button');
+        btnShelve.id = 'cm-btn-toggle-shelve';
+
+        function refreshShelveToggle() {
+            if (isShelved(id)) {
+                btnShelve.textContent = '⏸ 已搁置';
+                btnShelve.classList.add('is-shelved');
+            } else {
+                btnShelve.textContent = '⏸ 搁置';
+                btnShelve.classList.remove('is-shelved');
+            }
+        }
+
+        btnShelve.addEventListener('click', () => {
+            if (isShelved(id)) {
+                unmarkShelved(id);
+                dbg('已取消搁置, id=', id);
+            } else {
+                markShelved(id);
+                dbg('已标记为搁置, id=', id);
+            }
+            refreshShelveToggle();
+            const statusEl = document.getElementById('cm-tracker-status');
+            if (statusEl) statusEl.textContent = isShelved(id) ? '已搁置' : '已取消搁置';
+        });
+
         // 将下载按钮和自定义按钮包裹在同一个 flex 容器中，确保它们在同一行
         const btnWrapper = document.createElement('div');
         btnWrapper.id = 'cm-btn-wrapper';
@@ -512,10 +629,12 @@
         btnWrapper.appendChild(dlBtn);
         btnWrapper.appendChild(btnToggle);
         btnWrapper.appendChild(btnFav);
+        btnWrapper.appendChild(btnShelve);
 
         refreshToggle();
         refreshFavToggle();
-        dbg('insertToggleButton: 完成/收藏按钮已与下载按钮一同放入 flex 容器');
+        refreshShelveToggle();
+        dbg('insertToggleButton: 完成/收藏/搁置按钮已与下载按钮一同放入 flex 容器');
     }
 
     function runDetailPage() {
@@ -566,6 +685,7 @@
                 dbg('导入完成', merged);
                 refreshExistingToggle(id);
                 refreshExistingFavToggle(id);
+                refreshExistingShelveToggle(id);
             } catch (e) {
                 statusEl.textContent = '导入失败：' + e.message;
                 dbg('导入失败', e);
@@ -595,26 +715,40 @@
         links.forEach(link => {
             const id = extractIdFromPath(link.getAttribute('href') || '');
             if (!id) return;
-            if (!isCompleted(id)) return;
 
-            // 避免重复插入徽章
-            if (link.nextElementSibling && link.nextElementSibling.classList.contains('cm-done-badge')) return;
+            const alreadyDone = link.nextElementSibling && link.nextElementSibling.classList.contains('cm-done-badge');
+            const alreadyShelved = link.nextElementSibling && link.nextElementSibling.classList.contains('cm-shelved-badge');
 
-            // 在链接后追加徽章
-            const badge = document.createElement('span');
-            badge.className = 'cm-done-badge';
-            badge.textContent = '✔';
-            badge.title = '已完成';
-            link.insertAdjacentElement('afterend', badge);
+            if (isCompleted(id) && !alreadyDone) {
+                // 避免重复插入已完成徽章
+                const badge = document.createElement('span');
+                badge.className = 'cm-done-badge';
+                badge.textContent = '✔';
+                badge.title = '已完成';
+                link.insertAdjacentElement('afterend', badge);
 
-            // 高亮所在行（<tr> 祖先）
-            const row = link.closest('tr');
-            if (row) row.classList.add('cm-done-row');
+                const row = link.closest('tr');
+                if (row) row.classList.add('cm-done-row');
 
-            annotated++;
+                annotated++;
+            } else if (isShelved(id) && !alreadyShelved && !alreadyDone) {
+                // 仅在未显示已完成徽章时显示搁置徽章，避免重复插入
+                const badge = document.createElement('span');
+                badge.className = 'cm-shelved-badge';
+                badge.textContent = '⏸';
+                badge.title = '已搁置';
+                link.insertAdjacentElement('afterend', badge);
+
+                const row = link.closest('tr');
+                if (row) {
+                    row.classList.add('cm-shelved-row');
+                }
+
+                annotated++;
+            }
         });
 
-        dbg(`annotateSearchResults: 标注了 ${annotated} 个已完成条目`);
+        dbg(`annotateSearchResults: 标注了 ${annotated} 个条目`);
     }
 
     function runSearchPage() {
